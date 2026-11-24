@@ -45,6 +45,14 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      - name: Cache Go module downloads
+        uses: actions/cache@v6
+        with:
+          path: $(go env GOMODCACHE)
+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-gomod-
+
       - uses: davdhacs/brine/.github/actions/env-bootstrap@master
 
       - name: Install brine

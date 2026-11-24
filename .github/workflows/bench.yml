@@ -38,7 +38,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: prometheus/prometheus
-        with:
           ref: ${{ inputs.commit || 'HEAD~1' }}
           fetch-depth: 0
 
@@ -73,6 +72,6 @@ jobs:
       - name: Record cache usage
         run: |
           U=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-            "https://api.github.com/repos/davdhacs/prom-arm-d/actions/cache/usage")
+            "https://api.github.com/repos/davdhacs/prom-bench-d/actions/cache/usage")
           printf 'RESULT quota_bytes=%s\n' "$(printf %s "$U" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_caches_size_in_bytes",""))')"
           cat "$RUNNER_TEMP/runner.txt" "$RUNNER_TEMP/calib.txt" 2>/dev/null || true

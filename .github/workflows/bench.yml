@@ -1,0 +1,78 @@
+name: bench
+# Arm D: brine receipt on the whole build. The `go build` command is
+# memoized with a content-addressed receipt. Same-commit re-runs restore
+# the binary without running Go. New commits get a full rebuild (Go
+# doesn't leave .o files for incremental restore).
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'prometheus commit SHA to replay'
+        required: false
+        type: string
+
+permissions:
+  actions: write
+
+env:
+  GO_VERSION: "1.27"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Runner record + calibration probe
+        run: |
+          { date -u +%FT%TZ; grep -m1 'model name' /proc/cpuinfo; echo "nproc=$(nproc)"; } | tee "$RUNNER_TEMP/runner.txt"
+          curl -sSfLO https://sqlite.org/2024/sqlite-amalgamation-3450100.zip
+          unzip -q sqlite-amalgamation-3450100.zip
+          cd sqlite-amalgamation-3450100
+          for i in 1 2 3; do
+            rm -f sqlite3.o
+            S=$(date +%s%3N); gcc -O2 -c sqlite3.c; E=$(date +%s%3N)
+            echo "calib_ms=$((E-S))"
+          done | tee "$RUNNER_TEMP/calib.txt"
+
+      - name: Checkout prometheus at the target commit
+        uses: actions/checkout@v4
+        with:
+          repository: prometheus/prometheus
+        with:
+          ref: ${{ inputs.commit || 'HEAD~1' }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: davdhacs/brine/.github/actions/env-bootstrap@master
+
+      - name: Install brine
+        run: |
+          curl -sSfL https://github.com/davdhacs/brine/releases/download/v0.5.4-gha/brine-linux-amd64 -o /usr/local/bin/brine
+          chmod +x /usr/local/bin/brine
+
+      - name: Build prometheus under brine receipt
+        env:
+          BRINE_GH_TOKEN: ${{ github.token }}
+        run: |
+          export BRINE_REMOTE=1 BRINE_GOCACHE_REMOTE=1
+          printf '{\n  "output_patterns": ["prometheus"]\n}\n' > .brine.json
+          T0=$(date +%s%3N)
+          brine go build -o prometheus ./cmd/prometheus
+          E=$(date +%s%3N)
+          echo "RESULT phase=build ms=$((E-T0))"
+
+      - name: Verify binary
+        run: |
+          test -x prometheus
+          ./prometheus --version 2>&1 | head -2
+          echo "RESULT phase=verify ok=1"
+
+      - name: Record cache usage
+        run: |
+          U=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/davdhacs/prom-arm-d/actions/cache/usage")
+          printf 'RESULT quota_bytes=%s\n' "$(printf %s "$U" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("active_caches_size_in_bytes",""))')"
+          cat "$RUNNER_TEMP/runner.txt" "$RUNNER_TEMP/calib.txt" 2>/dev/null || true
